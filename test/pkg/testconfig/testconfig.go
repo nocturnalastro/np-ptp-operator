@@ -15,6 +15,7 @@ import (
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/clean"
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/client"
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/k8sutil"
+	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/logging"
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/metrics"
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/nodes"
 	"github.com/k8snetworkplumbingwg/ptp-operator/test/pkg/ptphelper"
@@ -953,6 +954,7 @@ func CreatePtpConfigGrandMaster(nodeName, ifName string) error {
 	if err != nil {
 		return fmt.Errorf("error setting Grandmaster node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "TGM")
 
 	// Grandmaster - add interface section with auth settings
 	gmConfig := GetPtp4lConfigWithAuth(BasePtp4lConfig) + "\npriority1 0\npriority2 0\nclockClass 6"
@@ -985,6 +987,7 @@ func CreatePtpConfigWPCGrandMaster(policyName string, nodeName string, ifList []
 	if err != nil {
 		return fmt.Errorf("error setting WPC GM grandmaster node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "TGM")
 
 	ts2phcConfig := BaseTs2PhcConfig + fmt.Sprintf("\nts2phc.nmea_serialport  /dev/%s\n", deviceID)
 	ts2phcConfig = fmt.Sprintf("%s\n[%s]\nts2phc.extts_polarity rising\nts2phc.extts_correction 0\n", ts2phcConfig, ifList[0])
@@ -1127,6 +1130,7 @@ func CreatePtpConfigTelcoBoundaryClock(configName, nodeName, ifSlaveName string,
 	if err != nil {
 		logrus.Errorf("Error setting T-BC node role label: %s", err)
 	}
+	logging.SetNodeClockType(nodeName, "TBC")
 
 	tbcBase := BasePtp4lConfig
 	tbcBase = strings.Replace(tbcBase, "announceReceiptTimeout 6", "announceReceiptTimeout 3", 1)
@@ -1254,6 +1258,7 @@ func CreatePtpConfigBC(policyName, nodeName, ifMasterName, ifSlaveName string, p
 	if err != nil {
 		return fmt.Errorf("error setting BC node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "BC")
 
 	bcConfig := GetPtp4lConfigWithAuth(BasePtp4lConfig) + "\nboundary_clock_jbod 1\ngmCapable 0"
 	bcConfig = AddAuthSettings(AddInterface(bcConfig, ifSlaveName, 0))
@@ -1288,6 +1293,7 @@ func CreatePtpConfigOC(profileName, nodeName, ifSlaveName string, phc2sys bool, 
 	if err != nil {
 		return fmt.Errorf("error setting Slave node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "OC")
 	ptp4lsysOpts := ptp4lEthernetSlave
 	var phc2sysOpts *string
 	temp := phc2sysSlave
@@ -1321,6 +1327,7 @@ func CreatePtpConfigDualFollower(profileName, nodeName, ifSlave1Name, ifSlave2Na
 	if err != nil {
 		return fmt.Errorf("error setting Slave node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "DualFollower")
 	ptp4lsysOpts := ptp4lEthernetSlave
 	var phc2sysOpts *string
 	temp := phc2sysSlave
@@ -1588,6 +1595,7 @@ func createPtpConfigPhc2SysHA(policyName string, nodeName string, haProfiles []s
 	if err != nil {
 		return fmt.Errorf("error setting HA node role label: %w", err)
 	}
+	logging.SetNodeClockType(nodeName, "DualNICBCHA")
 
 	ptpSchedulingPolicy := SCHED_OTHER
 	configureFifo, err := strconv.ParseBool(os.Getenv("CONFIGURE_FIFO"))

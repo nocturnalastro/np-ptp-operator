@@ -50,12 +50,14 @@ var (
 
 // PodLogCollector manages log streaming from PTP pods
 type PodLogCollector struct {
-	logDir        string
-	ctx           context.Context
-	cancel        context.CancelFunc
-	writers       *fileWriterSet
-	streamTracker *streamTracker
-	wg            sync.WaitGroup // Wait for all goroutines to finish
+	logDir         string
+	nodeClockTypes map[string]string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	writers        *fileWriterSet
+	streamTracker  *streamTracker
+	wg             sync.WaitGroup // Wait for all goroutines to finish
+	mu             sync.RWMutex   // protects nodeClockTypes
 }
 
 // fileWriterSet manages individual file writers
@@ -137,9 +139,10 @@ func StartLogCollection(suiteName string) error {
 	// Initialize collector
 	ctx, cancel := context.WithCancel(context.Background())
 	collector = &PodLogCollector{
-		logDir: logDir,
-		ctx:    ctx,
-		cancel: cancel,
+		logDir:         logDir,
+		nodeClockTypes: make(map[string]string),
+		ctx:            ctx,
+		cancel:         cancel,
 		writers: &fileWriterSet{
 			nodeWriters: make(map[string]*nodeFileWriters),
 		},
@@ -244,6 +247,29 @@ func WriteStep(step string) {
 	}
 }
 
+// SetNodeClockType registers the clock type for a node so it appears in the log file name.
+// Must be called before log streaming begins for that node to take effect.
+func SetNodeClockType(nodeName, clockType string) {
+	if collector == nil {
+		return
+	}
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	collector.nodeClockTypes[nodeName] = clockType
+}
+
+// SetNodeClockTypes registers clock types for multiple nodes at once.
+func SetNodeClockTypes(nodeClockTypes map[string]string) {
+	if collector == nil {
+		return
+	}
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	for nodeName, clockType := range nodeClockTypes {
+		collector.nodeClockTypes[nodeName] = clockType
+	}
+}
+
 // ============================================================================
 // File Writer - One goroutine per file
 // ============================================================================
@@ -336,10 +362,20 @@ func (fws *fileWriterSet) getOrCreateNodeWriters(nodeName string) *nodeFileWrite
 		return writers
 	}
 
+	// Look up clock type for this node
+	collector.mu.RLock()
+	clockType := collector.nodeClockTypes[nodeName]
+	collector.mu.RUnlock()
+
+	clockSuffix := ""
+	if clockType != "" {
+		clockSuffix = "-" + clockType
+	}
+
 	// Create new writers for this node
 	daemonWriter, err := newFileWriter(
 		collector.ctx,
-		filepath.Join(collector.logDir, fmt.Sprintf("linuxptp-daemon-%s-%s.log", nodeName, pkg.PtpContainerName)),
+		filepath.Join(collector.logDir, fmt.Sprintf("linuxptp-daemon-%s%s-%s.log", nodeName, clockSuffix, pkg.PtpContainerName)),
 	)
 	if err != nil {
 		logrus.Errorf("Failed to create daemon writer for node %s: %v", nodeName, err)
@@ -348,7 +384,7 @@ func (fws *fileWriterSet) getOrCreateNodeWriters(nodeName string) *nodeFileWrite
 
 	proxyWriter, err := newFileWriter(
 		collector.ctx,
-		filepath.Join(collector.logDir, fmt.Sprintf("linuxptp-daemon-%s-%s.log", nodeName, pkg.EventProxyContainerName)),
+		filepath.Join(collector.logDir, fmt.Sprintf("linuxptp-daemon-%s%s-%s.log", nodeName, clockSuffix, pkg.EventProxyContainerName)),
 	)
 	if err != nil {
 		logrus.Errorf("Failed to create proxy writer for node %s: %v", nodeName, err)
