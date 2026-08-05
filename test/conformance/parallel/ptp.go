@@ -357,9 +357,7 @@ func testSyncState(soakTestConfig ptptestconfig.SoakTestConfig, fullConfig testc
 	slaveClockSyncTestSpec := soakTestConfig.SlaveClockSyncConfig.TestSpec
 	logrus.Infof("%+v", slaveClockSyncTestSpec)
 	syncEvents := ""
-	// Create timer channel for test case timeout.
 	testCaseDuration := time.Duration(slaveClockSyncTestSpec.Duration) * time.Minute
-	tcEndChan := time.After(testCaseDuration)
 	// registers channel to receive OsClockSyncStateChange events using the ptp-listener-lib
 	tcEventChan, subscriberID := event.PubSub.Subscribe(string(ptpEvent.OsClockSyncStateChange), incomingEventsBuffer)
 	// unsubscribe event type when finished
@@ -382,6 +380,10 @@ func testSyncState(soakTestConfig ptptestconfig.SoakTestConfig, fullConfig testc
 		Fail(fmt.Sprintf("could not start listening to events, err=%s", err))
 	}
 	defer func() { term <- true }()
+	// Start the test case timer only after setup is complete, so that
+	// PushInitialEvent retries and MonitorPodLogsRegex startup don't
+	// consume the monitoring window.
+	tcEndChan := time.After(testCaseDuration)
 	// counts number of times the clock state looses LOCKED state
 	failureCounter := 0
 	wasLocked := false
