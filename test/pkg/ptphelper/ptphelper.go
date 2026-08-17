@@ -85,7 +85,7 @@ func GetProfileLogID(ptpConfigName string, label *string, nodeName *string) (str
 	const logIDRegex = `(?m).*?Ptp4lConf: #profile: %s(.|\n)*?message_tag \[(.*)\]`
 	const logIDIndex = 2
 
-	renderedRegex := fmt.Sprintf(logIDRegex, ptpConfigName)
+	profileCandidates := getProfileNameCandidates(ptpConfigName)
 	var lastErr error
 	deadline := time.Now().Add(pkg.TimeoutIn3Minutes)
 	for attempt := 1; ; attempt++ {
@@ -93,20 +93,30 @@ func GetProfileLogID(ptpConfigName string, label *string, nodeName *string) (str
 		if err != nil {
 			lastErr = fmt.Errorf("finding pod for %s: %w", ptpConfigName, err)
 		} else {
-			matches, err := pods.GetPodLogsRegex(pod.Namespace,
-				pod.Name, pkg.PtpContainerName,
-				renderedRegex, false, pkg.TimeoutIn1Minute)
-			if err != nil {
-				lastErr = fmt.Errorf("could not get any profile line, err=%s", err)
-			} else if len(matches) == 0 || len(matches[len(matches)-1]) <= logIDIndex {
-				lastErr = fmt.Errorf("profile log id not found for %s in pod %s/%s", ptpConfigName, pod.Namespace, pod.Name)
-			} else {
-				id := matches[len(matches)-1][logIDIndex]
-				if id == "" {
-					lastErr = fmt.Errorf("empty profile log id for %s in pod %s/%s", ptpConfigName, pod.Namespace, pod.Name)
+			found := false
+			for _, profileCandidate := range profileCandidates {
+				renderedRegex := fmt.Sprintf(logIDRegex, profileCandidate)
+				matches, getErr := pods.GetPodLogsRegex(pod.Namespace,
+					pod.Name, pkg.PtpContainerName,
+					renderedRegex, false, pkg.TimeoutIn1Minute)
+				if getErr != nil {
+					lastErr = fmt.Errorf("could not get any profile line, err=%s", getErr)
 				} else {
+					if len(matches) == 0 || len(matches[len(matches)-1]) <= logIDIndex {
+						lastErr = fmt.Errorf("profile log id not found for %s (candidate=%s) in pod %s/%s", ptpConfigName, profileCandidate, pod.Namespace, pod.Name)
+						continue
+					}
+					id := matches[len(matches)-1][logIDIndex]
+					if id == "" {
+						lastErr = fmt.Errorf("empty profile log id for %s (candidate=%s) in pod %s/%s", ptpConfigName, profileCandidate, pod.Namespace, pod.Name)
+						continue
+					}
+					found = true
 					return id, nil
 				}
+			}
+			if !found && lastErr == nil {
+				lastErr = fmt.Errorf("profile log id not found for %s in pod %s/%s", ptpConfigName, pod.Namespace, pod.Name)
 			}
 		}
 
@@ -123,6 +133,28 @@ func GetProfileLogID(ptpConfigName string, label *string, nodeName *string) (str
 		logrus.Infof("GetProfileLogID attempt %d failed for %s: %v, retrying...", attempt, ptpConfigName, lastErr)
 		time.Sleep(pkg.Timeout10Seconds)
 	}
+}
+
+func getProfileNameCandidates(profileName string) []string {
+	candidates := []string{profileName}
+	seen := map[string]struct{}{
+		profileName: {},
+	}
+	for idx := strings.Index(profileName, "_"); idx != -1; {
+		candidate := profileName[idx+1:]
+		if candidate != "" {
+			if _, ok := seen[candidate]; !ok {
+				candidates = append(candidates, candidate)
+				seen[candidate] = struct{}{}
+			}
+		}
+		next := strings.Index(profileName[idx+1:], "_")
+		if next == -1 {
+			break
+		}
+		idx += next + 1
+	}
+	return candidates
 }
 
 // configFileFromLogID derives the ptp4l config file path from a profile log ID.
